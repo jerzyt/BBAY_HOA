@@ -1,0 +1,150 @@
+---
+title: "Boulder Bay Home Sales"
+author: "JerzyT"
+date: "9/1/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readxl)
+library(lubridate)
+```
+
+## Boulder Bay Condos Sale Prices
+
+Anyone who's ever bought, sold or refinanced a home or a condo is probably aware of the ["comps."](https://www.zillow.com/sellers-guide/real-estate-comps/)  Banks are acutely sensitive to the comp values, to determine the risk level of a loan.  In a nutshell, the comps are property prices of comparable properties, and they are used to establish a baseline price.
+
+Typically, it's difficult to find enough recent transactions for comparable properties, which makes this task quite difficult and somewhat arbitrary.
+
+Recently, I wanted to do a very specific price comparison, limited to a single condo complex in [Big Bear Lake, California.](https://en.wikipedia.org/wiki/Big_Bear_Lake,_California)  The entire complex consists of 50 units with identical floor plans, with the only two exceptions being an upper or lower unit and having a lake view or not.
+
+Through a series of unfortunate events (foreclosure), the HOA became an owner of one of the 50 units in the complex, and as a consequence, I became 1/49^th^ owner if it. Recently the owners voted to sell it and apply the funds to the overall maintenance of the entire complex.
+
+
+This analysis is based on sales data from one 50-unit condo complex in Big Bear Lake, California.
+Only sales data after year 2000 are shown to reduce the variation in conditions of the properties.
+Some of the units have been nicely remodeled, while some are essentially in the same state as built in 1980, minus wear and tear, in other words total fixer-uppers.
+
+One key question I want to answer here is whether units with a view of the lake command higher prices.  This seems to be the prevailing belief among the owners, but I wanted to verify it with data.
+
+All data obtained from Zillow.  Manually, painstakingly, but likely faster than writing a dedicated scraper.
+
+The first code chunk creates a few calculated variables, as well as fits a LOWESS model to the prices and calculates the residuals from the LOWESS.  It'll soon become clear why I'm doing that.
+
+```{r sales}
+df <- read_excel('condo_sales.xlsx')
+df %>% mutate(level = ifelse(unit > 25, 'U', 'L'),
+			  view = ifelse(unit %% 25 > 2 & unit %% 25 < 10, 'lake', 'none'),
+			  month = month(date),
+			  dow = wday(date, label=TRUE),
+			  julian = julian(date)) -> df
+
+df$julian <- df$julian - min(df$julian)
+lFit <- loess(price ~ as.numeric(julian), data=df, span=0.5)
+df$res <- lFit$residuals
+
+```
+
+## Price Plot
+
+As we can see in the plot, there is a lot of variation in prices over the 20-year span.
+
+The plot is also a painful reminder of the 2008 recession.
+
+Superficially, the units with the lake view seem to fall mostly above the LOESS curve, so it may be tempting to agree with the perception of the owners.  However, there's enough variability that I wanted to eliminate it.  Given that the data set is relatively small (68 observations), I've used LOESS to build a simple, but robust model of the prices.  After all, we all know that real estate prices rise or fall together.
+
+```{r price}
+g <- ggplot(df, aes(x=date, y=price)) +
+	geom_point(aes(color=view), size=5, show.legend = TRUE) +
+	geom_text(aes(label=unit)) +
+	geom_smooth(method='loess') +
+	ggtitle('Sale Price of Boulder Bay Condos') +
+	xlab('Sale Date') +
+	ylab('Sale Price') +
+	theme(legend.position = 'bottom')
+
+plot(g)
+```
+
+## Plot of Residuals from LOESS Fit
+
+Now it should be apparent why I have used the LOESS fit.  The model essentially de-trended the data.
+
+The lake view units still seem to fall mostly above the LOESS curve.
+
+Is this a stronger evidence of higher prices for these units?
+
+There's one suspicious observation here.  The sale of unit #28 for almost $75K below the market value.  An outlier?  Foreclosure?  I don't know, but I'll see what happens if I exclude it.
+
+
+```{r}
+g <- ggplot(df, aes(x=date, y=res)) +
+	geom_point(aes(color=view), size=5, show.legend = FALSE) +
+	geom_text(aes(label=unit)) +
+	geom_smooth(method='loess') +
+	#geom_line(aes(color=unit), show.legend = FALSE) +
+	ggtitle('Sale Price of Boulder Bay Condos') +
+	xlab('Sale Date') +
+	ylab('Price Residual from LOESS Fit') +
+	theme(legend.position = 'bottom')
+
+plot(g)
+```
+
+
+```{r}
+g <- ggplot(df, aes(x=view, y=res)) +
+	geom_boxplot() +
+	geom_point(aes(color=view), show.legend=FALSE) +
+	ggtitle('Price Residual from LOESS Fit') +
+	xlab('Lakeview vs Non-Lakeview') +
+	ylab('Price Residual from LOESS Fit')
+
+plot(g)
+```
+
+```{r}
+m <- lm(res ~ view, df)
+summary(m)
+```
+```{r}
+g <- ggplot(df, aes(x=level, y=res)) +
+	geom_boxplot() +
+	geom_point(aes(color=level), show.legend=FALSE) +
+	ggtitle('Price Residual from LOESS Fit') +
+	xlab('Upper vs Lower Level') +
+	ylab('Price Residual from LOESS Fit')
+
+plot(g)
+```
+```{r}
+m <- lm(res ~ level, df)
+summary(m)
+```
+## Removing the Outlier
+```{r}
+df <- df %>% filter(res > -70)
+```
+
+
+```{r}
+g <-  ggplot(df, aes(x=as.factor(month))) +
+	geom_bar(stat='count') +
+	ggtitle('Month of Sale') +
+	xlab('Month') +
+	ylab('Count')
+
+plot(g)
+```
+
+```{r}
+g <-  ggplot(df, aes(x=dow)) +
+	geom_bar(stat='count') +
+	ggtitle('Week Day of Sale') +
+	xlab('Day of Week') +
+	ylab('Count')
+
+plot(g)
+```
